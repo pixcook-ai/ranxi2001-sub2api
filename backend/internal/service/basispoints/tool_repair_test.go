@@ -224,7 +224,7 @@ func TestToolRepairRestoresOriginalRawPayload(t *testing.T) {
 			definition := object{"type": "custom", "name": "apply_patch"}
 			marker := customTransportPrefix + "apply_patch"
 			if tc.functionCode {
-				definition = object{"type": "function", "name": "run_script", "parameters": object{"type": "object", "properties": object{"code": object{"type": "string"}, "timeout_ms": object{"type": "integer"}}}}
+				definition = object{"type": "function", "name": "run_script", "parameters": object{"type": "object", "required": []any{"code"}, "properties": object{"code": object{"type": "string"}, "timeout_ms": object{"type": "integer"}}}}
 				marker = functionCodeTransportPrefix + "run_script"
 			}
 			source["tools"] = []any{definition}

@@ -262,3 +262,67 @@ func TestFunctionCodeTransportStreamingIsAtomic(t *testing.T) {
 		}
 	}
 }
+
+// A tool can expose code in one branch and a completion-only operation in
+// another. Advertising raw-code transport for the whole tool injects a code
+// field into the completion operation and makes its original schema fail.
+func TestFunctionCodeTransportPreservesCodeOptionalBranches(t *testing.T) {
+	const name = "mcp__cua_repl.js"
+	schema := object{
+		"type": "object", "additionalProperties": false,
+		"properties": object{
+			"code": object{"type": "string"}, "title": object{"type": "string"},
+			"timeout_ms": object{"type": "integer"}, "completion_summary": object{"type": "string"},
+		},
+		"oneOf": []any{
+			object{"type": "object", "required": []any{"code"}, "additionalProperties": false,
+				"properties": object{"code": object{"type": "string"}, "title": object{"type": "string"}, "timeout_ms": object{"type": "integer"}}},
+			object{"type": "object", "required": []any{"completion_summary"}, "additionalProperties": false,
+				"properties": object{"completion_summary": object{"type": "string"}}},
+		},
+	}
+	source := testSource()
+	source["tools"] = []any{object{"type": "function", "name": name, "parameters": schema}}
+	_, bridge := mustPrepare(t, source, "optional-code", nil)
+	completion := object{"completion_summary": "Checked model choices"}
+	native := nativeCall(object{"name": name, "arguments": completion})
+	// Follow the same transport choice the generated catalog tells the model to
+	// use. The no-code operation must survive it without adding any arguments.
+	if supportsFunctionCodeTransport(name, "function", schema) {
+		native = functionCodeTestNative(t, name, "", quoted(completion))
+	}
+	call, err := bridge.translateCall(native)
+	if err != nil {
+		t.Fatalf("catalog transport rejected a valid completion-only operation: %v", err)
+	}
+	if got := functionCodeTestArguments(t, call); !reflect.DeepEqual(got, completion) {
+		t.Fatalf("completion-only arguments changed: got %v", got)
+	}
+	history, err := bridge.rebuildNativeHistoryCall(call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := bridge.translateCall(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := functionCodeTestArguments(t, replayed); !reflect.DeepEqual(got, completion) {
+		t.Fatal("cache-miss history injected code into the completion-only operation")
+	}
+	if strings.Contains(describeCatalog(source["tools"].([]any)), "Use FUNCTION_CODE transport") {
+		t.Fatal("optional-code tool must keep ordinary function transport")
+	}
+	codeArgs := object{"code": "await app.getAXState();", "title": "Checking model choices"}
+	codeCall, err := bridge.translateCall(nativeCall(object{"name": name, "arguments": codeArgs}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := functionCodeTestArguments(t, codeCall); !reflect.DeepEqual(got, codeArgs) {
+		t.Fatal("ordinary function transport changed the code operation")
+	}
+	// The original oneOf/additionalProperties boundary remains authoritative.
+	both := object{"code": "", "completion_summary": "Checked model choices"}
+	if _, err := bridge.translateCall(nativeCall(object{"name": name, "arguments": both})); err == nil {
+		t.Fatal("mutually exclusive operation fields were accepted")
+	}
+}

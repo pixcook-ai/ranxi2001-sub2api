@@ -9,8 +9,9 @@ import (
 
 const functionCodeTransportPrefix = "codex2api.function_code/"
 
-// Only explicit string code parameters use the raw-code transport. Other
-// function arguments keep their existing JSON envelope representation.
+// Only unconditionally required string code parameters use raw-code transport.
+// Optional code or union branches that omit code keep the ordinary JSON envelope
+// so the transport never adds an argument absent from the selected operation.
 func supportsFunctionCodeTransport(name, kind string, parameters any) bool {
 	if kind != "function" || name == "" || strings.ContainsAny(name, "/\\") || strings.IndexFunc(name, unicode.IsSpace) >= 0 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return false
@@ -18,7 +19,16 @@ func supportsFunctionCodeTransport(name, kind string, parameters any) bool {
 	schema, _ := parameters.(object)
 	properties, _ := schema["properties"].(object)
 	code, _ := properties["code"].(object)
-	return schema["type"] == "object" && code["type"] == "string"
+	if schema["type"] != "object" || code["type"] != "string" {
+		return false
+	}
+	required, _ := schema["required"].([]any)
+	for _, field := range required {
+		if field == "code" {
+			return true
+		}
+	}
+	return false
 }
 
 // Keep executable text in the native code string. extended_summary carries only
